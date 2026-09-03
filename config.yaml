@@ -17,5 +17,5 @@ db_path: "edgedash.db"
 min_fit_score: 60
 sources:
   - "arbeitnow"
-  # - "apify"   # uncomment and add APIFY_TOKEN to .env to enable this source
+  # - "apify"   # requires APIFY_TOKEN in .env + a working actor ID in sources/apify.py
 use_mock_fetcher: false   # set to true to develop offline without network calls

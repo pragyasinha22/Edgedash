@@ -101,6 +101,8 @@ class Fetcher:
 
 def _to_db_row(row: dict) -> dict:
     """Map normalised source keys to the listings table schema."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
     return {
         "id":          row.get("id"),
         "title":       row.get("title"),
@@ -110,7 +112,8 @@ def _to_db_row(row: dict) -> dict:
         "description": row.get("description"),
         "source":      row.get("source"),
         "posted_at":   row.get("posted_at"),
-        "fetched_at":  row.get("fetched_at"),
+        # Always stamp fetched_at with current time for new rows
+        "fetched_at":  row.get("fetched_at") or now,
         "fit_score":   row.get("fit_score"),
         "fit_reason":  row.get("fit_reason"),
     }

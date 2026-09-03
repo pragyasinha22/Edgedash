@@ -1,0 +1,34 @@
+Here are all the commands to verify every part of the project, in order:
+
+1. Check imports — everything loads without errors
+python -c "from edgedash.config import load_config; from edgedash import storage; from edgedash.agents.base import Agent, AgentResult; from edgedash.agents.mock_fetcher import MockFetcher; from edgedash.agents.fetcher import Fetcher; from edgedash.sources.base import SOURCES; print('All imports OK')"
+
+2. Check config loads correctly
+python -c "from edgedash.config import load_config; c = load_config(); print(c)"
+
+3. Check database initialises and tables exist
+python -c "from edgedash.config import load_config; from edgedash import storage; c = load_config(); storage.init_db(c.db_path); print('DB OK'); print('Unscored:', storage.count_unscored(c.db_path)); print('Last fetch:', storage.last_fetch_time(c.db_path))"
+
+4. Check Arbeitnow source fetches real data (no key needed)
+python test_source.py
+
+5. Check Apify source skips cleanly without token (or runs if token is set)
+python -c "from edgedash.sources.apify import ApifySource; from edgedash.config import load_config; c = load_config(); r = ApifySource().fetch(c); print(f'apify returned {len(r)} rows')"
+
+6. Run a full cycle in LIVE mode
+python run_cycle.py
+
+7. Run a second cycle to prove deduplication (new count should be 0 or very low)
+python run_cycle.py
+
+8. Check what's in the database after the cycle
+python -c "from edgedash.config import load_config; from edgedash import storage; c = load_config(); rows = storage.get_listings(c.db_path, limit=5); [print(r['title'], '|', r['company'], '|', r['location']) for r in rows]"
+
+9. Check cycle_log has entries
+python -c "import sqlite3; conn = sqlite3.connect('edgedash.db'); rows = conn.execute('SELECT agent, status, records_touched, notes FROM cycle_log ORDER BY id DESC LIMIT 5').fetchall(); [print(r) for r in rows]; conn.close()"
+
+10. Run offline with mock data (flip the flag first) Edit config.yaml → set use_mock_fetcher: true, then:
+python run_cycle.py
+Then set it back to false.
+
+Run them in order — each one proves a different layer of the stack.

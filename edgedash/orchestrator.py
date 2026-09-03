@@ -10,7 +10,9 @@ from datetime import datetime, timezone
 from edgedash import storage
 from edgedash.agents.base import Agent, AgentResult
 from edgedash.agents.fetcher import Fetcher
+from edgedash.agents.gap_analyzer import GapAnalyzer
 from edgedash.agents.mock_fetcher import MockFetcher
+from edgedash.agents.scorer import Scorer
 from edgedash.config import Config
 
 # ---------------------------------------------------------------------------
@@ -51,9 +53,9 @@ def _make_fetcher(config: Config) -> Agent:
 
 def _build_registry(config: Config) -> list[Agent]:
     return [
-        _make_fetcher(config),                  # one line controls mock vs real
-        _NotImplementedAgent("Scorer"),         # week 2: swap for Scorer()
-        _NotImplementedAgent("GapAnalyzer"),    # week 3: swap for GapAnalyzer()
+        _make_fetcher(config),   # one line controls mock vs real
+        Scorer(),
+        GapAnalyzer(),
     ]
 
 
@@ -110,14 +112,9 @@ def run_cycle(config: Config) -> None:
     # 4. Decide plan
     _banner("Plan")
     for agent in agent_registry:
-        if isinstance(agent, _NotImplementedAgent):
-            print(f"  • {agent.name:<18} → SKIP  (not implemented yet)")
-        else:
-            print(f"  • {agent.name:<18} → RUN   (always run fetcher each cycle)")
+        print(f"  • {agent.name:<18} → RUN")
     if unscored > 0:
-        print(f"  • Scorer would run on {unscored} unscored listing(s) — waiting for implementation")
-    else:
-        print(f"  • Scorer — nothing to score yet")
+        print(f"  • Scorer will score {unscored} unscored listing(s)")
 
     # 5. Run agents
     _banner("Agent Runs")
@@ -131,15 +128,15 @@ def run_cycle(config: Config) -> None:
     _banner("Cycle Summary")
     total_new  = sum(r.records_touched for r in results if r.status == "ok")
     ok_count   = sum(1 for r in results if r.status == "ok")
-    skip_count = sum(1 for r in results if r.status == "skipped")
     fail_count = sum(1 for r in results if r.status == "failed")
     elapsed    = (datetime.now(timezone.utc) - cycle_start).total_seconds()
 
-    _row("Agents run:",    len(results))
-    _row("  ok:",          ok_count)
-    _row("  skipped:",     skip_count)
-    _row("  failed:",      fail_count)
-    _row("New listings:",  total_new)
-    _row("Unscored now:",  storage.count_unscored(config.db_path))
-    _row("Elapsed (s):",   f"{elapsed:.2f}")
+    _row("Agents run:",       len(results))
+    _row("  ok:",             ok_count)
+    _row("  failed:",         fail_count)
+    _row("New listings:",     next((r.records_touched for r in results if r.agent == "Fetcher"), 0))
+    _row("Scored:",           next((r.records_touched for r in results if r.agent == "Scorer"), 0))
+    _row("Gap-analyzed:",     next((r.records_touched for r in results if r.agent == "GapAnalyzer"), 0))
+    _row("Unscored now:",     storage.count_unscored(config.db_path))
+    _row("Elapsed (s):",      f"{elapsed:.2f}")
     print(f"\n{_SEP}\n")
