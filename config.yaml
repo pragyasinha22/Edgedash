@@ -1,0 +1,21 @@
+target_role: "Data Analyst"
+target_city: "Bengaluru"
+keywords:
+  - "data analyst"
+  - "SQL"
+  - "Python"
+  - "Power BI"
+  - "Tableau"
+my_skills:
+  - "Python"
+  - "SQL"
+  - "Excel"
+  - "Pandas"
+  - "data visualization"
+experience_years: 2
+db_path: "edgedash.db"
+min_fit_score: 60
+sources:
+  - "arbeitnow"
+  # - "apify"   # uncomment and add APIFY_TOKEN to .env to enable this source
+use_mock_fetcher: false   # set to true to develop offline without network calls
