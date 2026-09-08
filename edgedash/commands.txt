@@ -21,6 +21,7 @@ python run_cycle.py
 7. Run a second cycle to prove deduplication (new count should be 0 or very low)
 python run_cycle.py
 
+
 8. Check what's in the database after the cycle
 python -c "from edgedash.config import load_config; from edgedash import storage; c = load_config(); rows = storage.get_listings(c.db_path, limit=5); [print(r['title'], '|', r['company'], '|', r['location']) for r in rows]"
 
@@ -32,3 +33,35 @@ python run_cycle.py
 Then set it back to false.
 
 Run them in order — each one proves a different layer of the stack.
+
+----in week final video-------------------------------------------------
+1.Create a Project named 'edgedash' in supabase for postgres database.
+
+2.Run these command-
+Migrate sqlite database to postgres-
+(i)python -m edgedash.storage --migrate
+
+(ii).Check working or not-
+python -m edgedash.storage --check
+
+(iii)python run_cycle.py
+
+3.Copy database url from supabase-direct section & put in .env file-
+DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.cvhgisltoxdhcbadkvxv.supabase.co:5432/postgres
+
+4.Install library Postgres connectpor for database conection-
+pip install -r requirement.txt
+
+5.After this run migrate-python -m edgedash.storage --migrate
+All the tables that we had in sqlite db are created in postgres database
+
+
+
+
+
+
+
+
+
+
+

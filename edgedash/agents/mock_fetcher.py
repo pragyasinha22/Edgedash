@@ -9,9 +9,10 @@ from datetime import datetime, timezone
 
 from edgedash import storage
 from edgedash.agents.base import AgentResult
+from edgedash.agents.registry import register_agent
 from edgedash.config import Config
 
-NAME = "MockFetcher"
+NAME = "mock_fetcher"
 
 # These 4 IDs are stable across every run — dedup targets.
 _STABLE_IDS = [
@@ -191,14 +192,26 @@ def _build_listings(role: str, city: str) -> list[dict]:
     return dynamic + stable
 
 
+@register_agent
 class MockFetcher:
     name: str = NAME
 
-    def run(self, config: Config) -> AgentResult:
+    def __init__(self, config: Config | None = None) -> None:
+        # Config needed for registry compatibility, but not used in MockFetcher
+        pass
+
+    def run(self, config: Config, stop_conditions: dict | None = None) -> AgentResult:
         from datetime import datetime, timezone
         started = datetime.now(timezone.utc).isoformat()
 
+        stop = stop_conditions or {}
+        max_listings = stop.get("max_listings")
+
         listings = _build_listings(config.target_role, config.target_city)
+        # Respect max_listings
+        if max_listings is not None and max_listings > 0:
+            listings = listings[:max_listings]
+
         new_count = storage.upsert_listings(config.db_path, listings)
 
         notes = (

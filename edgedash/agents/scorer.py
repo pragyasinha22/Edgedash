@@ -1,149 +1,84 @@
 """
-Scorer agent — assigns a deterministic fit_score (0-100) to every unscored listing.
+Scorer agent — extracts facts then scores every unscored listing deterministically.
 
-Scoring breakdown:
-  - Role relevance  (0-40 pts): title alignment with target role signals
-  - Location        (0-20 pts): Bengaluru/Bangalore=20, Remote/Hybrid=15, India=10
-  - Skills match    (0-30 pts): proportion of config.my_skills found in description
-  - Experience      (0-10 pts): experience_years alignment with job requirements
+Flow per listing:
+  1. extractor.extract(listing)  -> facts dict (LLM call, cached)
+  2. scoring.score_listing(facts, config) -> {score, components, matched, missing}
+  3. scoring.build_reason(...)   -> compact human-readable string (rule 19)
+  4. storage.update_listing_score(...)
 
-No LLM, no randomness. Same inputs always produce the same score.
+Rules enforced:
+  - Rule 17: per-listing try/except — one failure = one skip, loop continues.
+  - Rule 18: only listings WHERE fit_score IS NULL, capped at score_batch_size.
+  - Rule 20: distribution (count, min, max, mean, spread) logged to cycle_log.
+             Spread < 10 → status "suspect".
+  - Rule 21: batch capped at config.score_batch_size (default 25).
 """
 
 from __future__ import annotations
 
+import logging
+import statistics
 from datetime import datetime, timezone
 
 from edgedash import storage
 from edgedash.agents.base import AgentResult
+from edgedash.agents.extractor import extract
+from edgedash.agents.registry import register_agent
 from edgedash.config import Config
+from edgedash.llm import LLMError
+from edgedash.scoring import build_reason, score_listing
+from edgedash.skills import canonical
+
+logger = logging.getLogger(__name__)
 
 NAME = "Scorer"
 
-_STRONG_ROLE_SIGNALS = [
-    "data analyst",
-    "business analyst",
-    "bi analyst",
-    "analytics analyst",
-    "reporting analyst",
-    "insights analyst",
-]
 
-_WEAK_ROLE_SIGNALS = [
-    "business intelligence",
-    "data specialist",
-    "data engineer",
-    "analytics",
-]
-
-_EXP_PATTERNS = [
-    ("0", "1", "0-1", "entry", "fresher", "junior", "associate"),   # 0-1 years
-    ("1", "2", "1-2", "0-2"),                                        # 1-2 years
-    ("2", "3", "2-3", "1-3"),                                        # 2-3 years
-    ("3", "4", "3-4", "2-4"),                                        # 3-4 years
-    ("4", "5", "4-5", "3-5", "senior", "lead"),                     # 4-5+ years
-]
-_EXP_YEAR_MAP = {token: idx for idx, bucket in enumerate(_EXP_PATTERNS) for token in bucket}
-
-
-def _score_role(title: str) -> int:
-    """0-40: how well the title matches analyst role signals."""
-    t = title.lower()
-    for sig in _STRONG_ROLE_SIGNALS:
-        if sig in t:
-            return 40
-    for sig in _WEAK_ROLE_SIGNALS:
-        if sig in t:
-            return 20
-    return 0
-
-
-def _score_location(location: str) -> tuple[int, str]:
-    """0-20: location relevance. Returns (score, reason)."""
-    loc = (location or "").lower().replace("bangalore", "bengaluru")
-    if "bengaluru" in loc:
-        return 20, "Bengaluru/Bangalore"
-    if "remote" in loc or "hybrid" in loc:
-        return 15, "Remote/Hybrid"
-    if "india" in loc:
-        return 10, "India"
-    return 0, f"non-target location ({location})"
-
-
-def _score_skills(description: str, my_skills: list[str]) -> tuple[int, list[str]]:
+def _distribution_notes(scores: list[int], failed: int) -> tuple[str, str]:
     """
-    0-30: proportion of my_skills found in description.
-    Returns (score, list of matched skills).
+    Return (notes_string, status) for cycle_log.
+    status is "suspect" if spread < 10, else "ok".
     """
-    if not my_skills:
-        return 0, []
-    desc = (description or "").lower()
-    matched = [s for s in my_skills if s.lower() in desc]
-    proportion = len(matched) / len(my_skills)
-    score = round(proportion * 30)
-    return score, matched
+    count = len(scores)
+    if count == 0:
+        return f"scored 0 · {failed} failed", "ok"
+
+    lo   = min(scores)
+    hi   = max(scores)
+    mean = statistics.mean(scores)
+    spread = hi - lo
+
+    suspect = spread < 10 and count > 1
+    status  = "suspect" if suspect else "ok"
+
+    notes = (
+        f"scored {count} · range {lo}-{hi} · mean {mean:.0f} · "
+        f"spread {'SUSPECT <10' if suspect else 'OK'} · {failed} failed"
+    )
+    return notes, status
 
 
-def _score_experience(description: str, experience_years: int) -> tuple[int, str]:
-    """
-    0-10: how well the job's experience requirement aligns with config.experience_years.
-    Looks for patterns like "2 years", "2-3 years", "senior", "fresher", etc.
-    """
-    desc = (description or "").lower()
-
-    # Map user experience to a bucket index (0=entry … 4=senior)
-    user_bucket = min(experience_years // 1, 4)
-
-    best_match_bucket: int | None = None
-    for token, bucket in _EXP_YEAR_MAP.items():
-        if token in desc:
-            if best_match_bucket is None or abs(bucket - user_bucket) < abs(best_match_bucket - user_bucket):
-                best_match_bucket = bucket
-
-    if best_match_bucket is None:
-        # No explicit requirement found — neutral
-        return 5, "no explicit experience requirement"
-
-    diff = abs(best_match_bucket - user_bucket)
-    if diff == 0:
-        return 10, f"experience aligns (bucket {best_match_bucket})"
-    elif diff == 1:
-        return 5, f"experience close (diff={diff})"
-    else:
-        return 0, f"experience mismatch (diff={diff})"
-
-
-def _compute_score(listing: dict, config: Config) -> tuple[int, str]:
-    """Return (fit_score 0-100, human-readable fit_reason)."""
-    title = listing.get("title") or ""
-    location = listing.get("location") or ""
-    description = listing.get("description") or ""
-
-    role_pts = _score_role(title)
-    loc_pts, loc_reason = _score_location(location)
-    skills_pts, matched_skills = _score_skills(description, config.my_skills)
-    exp_pts, exp_reason = _score_experience(description, config.experience_years)
-
-    total = role_pts + loc_pts + skills_pts + exp_pts
-
-    reason_parts = [
-        f"role={role_pts}/40",
-        f"location={loc_pts}/20 ({loc_reason})",
-        f"skills={skills_pts}/30 ({len(matched_skills)} matched: {', '.join(matched_skills) or 'none'})",
-        f"experience={exp_pts}/10 ({exp_reason})",
-    ]
-    reason = " | ".join(reason_parts)
-
-    return total, reason
-
-
+@register_agent
 class Scorer:
     name: str = NAME
 
-    def run(self, config: Config) -> AgentResult:
-        started = datetime.now(timezone.utc).isoformat()
+    def __init__(self, config: Config | None = None) -> None:
+        # Config needed for registry compatibility, but not used in Scorer
+        pass
 
-        listings = storage.get_unscored_listings(config.db_path)
+    def run(self, config: Config, stop_conditions: dict | None = None) -> AgentResult:
+        started = datetime.now(timezone.utc).isoformat()
+        started_dt = datetime.now(timezone.utc)
+
+        stop = stop_conditions or {}
+        max_items = stop.get("max_items", config.score_batch_size)
+        max_seconds = stop.get("max_seconds")
+
+        listings = storage.get_unscored_listings(
+            config.db_path, limit=max_items
+        )
+
         if not listings:
             notes = "No unscored listings found."
             storage.log_cycle(
@@ -156,43 +91,88 @@ class Scorer:
             )
             return AgentResult(agent=NAME, status="ok", records_touched=0, notes=notes)
 
-        scored_count = 0
-        score_distribution: dict[str, int] = {"0-39": 0, "40-59": 0, "60-79": 0, "80-100": 0}
+        scores:  list[int] = []
+        failed:  int       = 0
 
-        for listing in listings:
-            fit_score, fit_reason = _compute_score(listing, config)
-            storage.update_listing_score(
-                path=config.db_path,
-                listing_id=listing["id"],
-                fit_score=fit_score,
-                fit_reason=fit_reason,
-            )
-            scored_count += 1
+        for i, listing in enumerate(listings):
+            # Check max_seconds before processing each listing
+            if max_seconds is not None:
+                elapsed = (datetime.now(timezone.utc) - started_dt).total_seconds()
+                if elapsed >= max_seconds:
+                    logger.info("Scorer: stopped after %d listings due to max_seconds=%d", i, max_seconds)
+                    break
 
-            if fit_score < 40:
-                score_distribution["0-39"] += 1
-            elif fit_score < 60:
-                score_distribution["40-59"] += 1
-            elif fit_score < 80:
-                score_distribution["60-79"] += 1
-            else:
-                score_distribution["80-100"] += 1
+            listing_id = listing["id"]
+            title      = listing.get("title") or listing_id
 
-        dist_str = " | ".join(f"{k}: {v}" for k, v in score_distribution.items())
-        notes = f"Scored {scored_count} listings. Distribution: {dist_str}"
+            try:
+                # Step 1: extract structured facts (cached, rule 18)
+                facts = extract(listing)
+
+                # Step 2: deterministic score — no LLM, no randomness (rule 16)
+                result = score_listing(facts, config)
+                score  = result["score"]
+                components = result["components"]
+
+                # Attach matched/missing to facts so build_reason can use them
+                facts_with_match = {
+                    **facts,
+                    "matched_skills": result["matched_skills"],
+                    "missing_skills": result["missing_skills"],
+                }
+
+                # Step 3: human-readable reason from numbers (rule 19)
+                reason = build_reason(components, facts_with_match, config)
+
+                # Step 4: persist
+                storage.update_listing_score(
+                    path=config.db_path,
+                    listing_id=listing_id,
+                    fit_score=score,
+                    fit_reason=reason,
+                    score_components=components,
+                )
+                scores.append(score)
+                logger.info("Scored '%s' → %d  %s", title, score, reason)
+
+            except LLMError as exc:
+                failed += 1
+                logger.warning("Scorer: LLM failure for listing %s — skipping: %s", listing_id, exc)
+                storage.log_cycle(
+                    path=config.db_path,
+                    agent=NAME,
+                    started_at=started,
+                    records_touched=0,
+                    status="failed",
+                    notes=f"LLM failure for listing {listing_id}: {exc}",
+                )
+
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                logger.warning("Scorer: unexpected error for listing %s — skipping: %s", listing_id, exc)
+                storage.log_cycle(
+                    path=config.db_path,
+                    agent=NAME,
+                    started_at=started,
+                    records_touched=0,
+                    status="failed",
+                    notes=f"Unexpected error for listing {listing_id}: {exc}",
+                )
+
+        notes, status = _distribution_notes(scores, failed)
 
         storage.log_cycle(
             path=config.db_path,
             agent=NAME,
             started_at=started,
-            records_touched=scored_count,
-            status="ok",
+            records_touched=len(scores),
+            status=status,
             notes=notes,
         )
 
         return AgentResult(
             agent=NAME,
-            status="ok",
-            records_touched=scored_count,
+            status=status,
+            records_touched=len(scores),
             notes=notes,
         )

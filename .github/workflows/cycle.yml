@@ -1,0 +1,45 @@
+name: EdgeDash Cycle
+
+# Schedule: daily at 06:00 UTC+05:30 (India) = 00:30 UTC
+on:
+  schedule:
+    - cron: '30 0 * * *'  # 00:30 UTC = 06:00 India time
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  cycle:
+    name: Run EdgeDash Cycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 10  # Per rule 51
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: Migrate database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m edgedash.storage --migrate
+      
+      - name: Run cycle
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python run_cycle.py
+      
+      - name: Upload cycle log as artifact
+        if: always()  # Upload even if cycle fails
+        uses: actions/upload-artifact@v4
+        with:
+          name: cycle-log
+          path: edgedash.db
+          retention-days: 30

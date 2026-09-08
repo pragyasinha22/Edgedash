@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from edgedash import storage
 from edgedash.agents.base import AgentResult
+from edgedash.agents.registry import register_agent
 from edgedash.config import Config
 from edgedash.sources import arbeitnow as _  # ensure sources register themselves  # noqa: F401
 from edgedash.sources import apify as _apify  # noqa: F401
@@ -18,7 +19,7 @@ from edgedash.sources.base import SOURCES
 NAME = "Fetcher"
 
 
-def _run_source(source_name: str, config: Config) -> tuple[list[dict], str]:
+def _run_source(source_name: str, config: Config, max_pages: int | None = None) -> tuple[list[dict], str]:
     """
     Run one source and return (rows, summary_fragment).
     Never raises — failures are caught and reported as a fragment string.
@@ -29,23 +30,35 @@ def _run_source(source_name: str, config: Config) -> tuple[list[dict], str]:
     source = SOURCES[source_name]()
     try:
         rows = source.fetch(config)
+        # Respect max_pages if provided (truncates rows from the source)
+        if max_pages is not None and max_pages > 0:
+            rows = rows[:max_pages]
         return rows, None   # summary built after upsert so we know new count
     except Exception as exc:  # steering rule 12: one dead source must not kill cycle
         fragment = f"{source_name}: FAILED ({type(exc).__name__}: {exc})"
         return [], fragment
 
 
+@register_agent
 class Fetcher:
     name: str = NAME
 
-    def run(self, config: Config) -> AgentResult:
+    def __init__(self, config: Config | None = None) -> None:
+        # Config needed for registry compatibility, but not used in Fetcher
+        pass
+
+    def run(self, config: Config, stop_conditions: dict | None = None) -> AgentResult:
         started = datetime.now(timezone.utc).isoformat()
+
+        stop = stop_conditions or {}
+        max_listings = stop.get("max_listings")
+        max_pages = stop.get("max_pages")
 
         all_rows: list[dict] = []
         fragments: list[str] = []
 
         for source_name in config.sources:
-            rows, failure = _run_source(source_name, config)
+            rows, failure = _run_source(source_name, config, max_pages)
 
             if failure:
                 print(f"  [fetcher] WARNING: {failure}")
@@ -60,6 +73,10 @@ class Fetcher:
                 fragments.append(failure)
             else:
                 all_rows.extend(rows)
+                # Respect max_listings across all sources
+                if max_listings is not None and len(all_rows) >= max_listings:
+                    all_rows = all_rows[:max_listings]
+                    break
 
         # Compute stable IDs using the same function storage already uses
         for row in all_rows:

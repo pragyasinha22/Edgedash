@@ -50,18 +50,26 @@ Fetcher Scorer GapAnalyzer   one goal each, one stop condition each
 - [x] `edgedash/agents/fetcher.py` — real Fetcher, iterates source registry, per-source failure isolation
 - [x] `edgedash/settings.py` — single env-var loader, reads `.env` via python-dotenv
 - [x] `.env.example` — lists all required env vars with empty values (committed)
-- [ ] `edgedash/agents/scorer.py` — LLM-based fit scoring, writes `fit_score` + `fit_reason`
+- [x] `edgedash/agents/extractor.py` — LLM-based fact extraction from job descriptions
+- [x] `edgedash/agents/scorer.py` — deterministic fit scoring, writes `fit_score` + `fit_reason`
+- [x] `edgedash/scoring.py` — pure scoring arithmetic (skills, seniority, remote, recency)
+- [x] `edgedash/llm.py` — single LLM gateway with rate limiting and retry logic
+- [x] `edgedash/skills.py` — skill canonicalisation with alias map support
 
-### Week 3 — coming
+### Week 3 — complete
 
-- [ ] `edgedash/agents/gap_analyzer.py` — surfaces skill gaps from unmatched listings
-- [ ] `edgedash/verifier.py` — sanity-checks scores and gaps before storage commit
+- [x] `edgedash/agents/gap_analyzer.py` — surfaces skill gaps from unmatched listings
+- [x] `edgedash/verification.py` — sanity-checks scores and gaps before storage commit
+- [x] `edgedash/state.py` — system state inspection for planning decisions
+- [x] `edgedash/planning.py` — state-driven execution planning
+- [x] `edgedash/agents/registry.py` — agent registration and resolution
 
 ### Week 4 — coming
 
 - [ ] Migrate `edgedash/storage.py` from SQLite to hosted Postgres (one-file change by design)
 - [ ] `dashboard/app.py` — Streamlit dashboard, read-only view of listings and gaps
 - [ ] Scheduler / cron wiring for fully autonomous daily runs
+- [ ] Integration of Verifier into the orchestrator cycle
 
 ---
 
@@ -126,6 +134,36 @@ python run_cycle.py
 
 The console prints the state read from the database, the plan the orchestrator chose, each agent's result, and a cycle summary. Every run is logged to the `cycle_log` table.
 
+### CLI Options
+
+```bash
+# Dry-run: print plan without executing
+python run_cycle.py --dry-run
+
+# Force specific agents to run (override state-based decisions)
+python run_cycle.py --force scorer --force gap_analyzer
+
+# Explain: print full SystemState with decision explanations
+python run_cycle.py --explain
+```
+
+### Skill Management
+
+```bash
+# Audit: show top-40 raw skill strings and singletons from extraction cache
+python -m edgedash.skills --audit
+
+# Suggest aliases: LLM-proposed alias groupings (read-only, requires review)
+python -m edgedash.skills --suggest-aliases
+```
+
+### LLM Check
+
+```bash
+# Test LLM connectivity
+python -m edgedash.llm --check
+```
+
 ---
 
 ## Design decisions
@@ -145,3 +183,32 @@ trustworthy.
 Keeping the orchestrator free of fetch and scoring logic means each concern is
 tested in isolation. Adding or replacing an agent is a one-line registry change
 with no risk of breaking the coordination logic.
+
+---
+
+## Verification Commands
+
+Run these commands to verify the project is working correctly:
+
+```bash
+# 1. Check imports — everything loads without errors
+python -c "from edgedash.config import load_config; from edgedash import storage; from edgedash.agents.base import Agent, AgentResult; from edgedash.agents.mock_fetcher import MockFetcher; from edgedash.agents.fetcher import Fetcher; from edgedash.agents.scorer import Scorer; from edgedash.agents.gap_analyzer import GapAnalyzer; from edgedash.sources.base import SOURCES; print('All imports OK')"
+
+# 2. Check config loads correctly
+python -c "from edgedash.config import load_config; c = load_config(); print(c)"
+
+# 3. Check database initialises and tables exist
+python -c "from edgedash.config import load_config; from edgedash import storage; c = load_config(); storage.init_db(c.db_path); print('DB OK'); print('Unscored:', storage.count_unscored(c.db_path)); print('Last fetch:', storage.last_fetch_time(c.db_path))"
+
+# 4. Check Arbeitnow source fetches real data (no key needed)
+python test_source.py
+
+# 5. Check Apify source skips cleanly without token (or runs if token is set)
+python -c "from edgedash.sources.apify import ApifySource; from edgedash.config import load_config; c = load_config(); r = ApifySource().fetch(c); print(f'apify returned {len(r)} rows')"
+
+# 6. Run a full cycle in LIVE mode
+python run_cycle.py
+
+# 7. Run a second cycle to prove deduplication (new count should be 0 or very low)
+python run_cycle.py
+```

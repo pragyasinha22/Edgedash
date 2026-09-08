@@ -21,5 +21,5 @@ class Agent(Protocol):
 
     name: str
 
-    def run(self, config: Config) -> AgentResult:
+    def run(self, config: Config, stop_conditions: dict | None = None) -> AgentResult:
         ...

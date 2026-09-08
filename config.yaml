@@ -1,21 +1,94 @@
-target_role: "Data Analyst"
-target_city: "Bengaluru"
-keywords:
-  - "data analyst"
-  - "SQL"
-  - "Python"
-  - "Power BI"
-  - "Tableau"
-my_skills:
-  - "Python"
-  - "SQL"
-  - "Excel"
-  - "Pandas"
-  - "data visualization"
+analyse_max_seconds: 180
+db_path: edgedash.db
 experience_years: 2
-db_path: "edgedash.db"
+fetch_interval_hours: 6
+fetch_max_listings: 100
+fetch_max_pages: 5
+keywords:
+- data analyst
+- SQL
+- Python
+- Power BI
+- Tableau
+llm_batch_size: 25
+llm_model: gemini-2.5-flash
+llm_provider: gemini
+llm_rpm: 15
+llm_rps: 1
 min_fit_score: 60
+my_skills:
+- Python
+- SQL
+- Excel
+- Pandas
+- data visualization
+prefer_remote: false
+score_batch_size: 25
+score_max_seconds: 300
+skill_aliases:
+  amazon web services: aws
+  apache spark: spark
+  api: rest
+  aws: aws
+  azure: azure
+  bash/shell: bash
+  ci cd: ci/cd
+  ci-cd: ci/cd
+  ci/cd: ci/cd
+  cicd: ci/cd
+  data build tool: dbt
+  dbt: dbt
+  gcp: google cloud
+  google cloud platform: google cloud
+  google data studio: looker
+  javascript/typescript: javascript
+  js: javascript
+  k8: kubernetes
+  k8s: kubernetes
+  linux/unix: linux
+  looker studio: looker
+  machine-learning: machine learning
+  microsoft azure: azure
+  microsoft excel: excel
+  microsoft power bi: power bi
+  microsoft sql server: sql server
+  ml: machine learning
+  mongo: mongodb
+  mongodb: mongodb
+  ms excel: excel
+  ms sql: sql server
+  mssql: sql server
+  mysql: mysql
+  node: node
+  node.js: node
+  nodejs: node
+  nosql: nosql
+  pg: postgres
+  postgresql: postgres
+  power bi: power bi
+  powerbi: power bi
+  psql: postgres
+  pyspark: spark
+  python 3: python
+  python3: python
+  rest api: rest
+  restful: rest
+  restful api: rest
+  sci-kit learn: scikit-learn
+  scikit-learn: scikit-learn
+  shell scripting: bash
+  sklearn: scikit-learn
+  t-sql: sql server
+  tensorflow: tensorflow
+  tf: tensorflow
+  tsql: sql server
 sources:
-  - "arbeitnow"
-  # - "apify"   # requires APIFY_TOKEN in .env + a working actor ID in sources/apify.py
-use_mock_fetcher: false   # set to true to develop offline without network calls
+- arbeitnow
+target_city: Bengaluru
+target_role: Data Analyst
+target_seniority: mid
+use_mock_fetcher: true
+weight_recency: 0.15
+weight_remote: 0.15
+weight_seniority: 0.2
+weight_skills: 0.5

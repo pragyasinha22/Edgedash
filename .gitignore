@@ -1,8 +1,11 @@
 # Secrets — never commit
 .env
+.streamlit/secrets.toml
 
 # Database
 *.db
+*.db-shm
+*.db-wal
 
 # Python
 __pycache__/

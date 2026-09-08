@@ -8,10 +8,14 @@ Results are capped at 100 to protect free-tier credits.
 
 from __future__ import annotations
 
+import logging
+
 from edgedash import settings
 from edgedash.config import Config
 from edgedash.sources.base import register_source
 from edgedash.sources.http import SourceError, get_json
+
+logger = logging.getLogger(__name__)
 
 # Apify run-sync-get-dataset-items endpoint.
 # Actor: apify/indeed-scraper is free-tier compatible and returns job listings.
@@ -46,7 +50,7 @@ class ApifySource:
     def fetch(self, config: Config) -> list[dict]:
         token = settings.get("APIFY_TOKEN")
         if not token:
-            print("  [apify] no APIFY_TOKEN in environment — skipping source")
+            logger.info("apify: no APIFY_TOKEN in environment — skipping source")
             return []
 
         params = {
@@ -59,12 +63,12 @@ class ApifySource:
         try:
             data = get_json(_endpoint(_ACTOR_ID), params=params)
         except SourceError as exc:
-            print(f"  [apify] fetch failed: {exc}")
+            logger.warning(f"apify: fetch failed: {exc}")
             return []
 
         # Actor may return a list directly or a dict with a "items" key
         items: list[dict] = data if isinstance(data, list) else data.get("items", [])
         items = items[:_CAP]  # hard cap — never exceed free tier limit
 
-        print(f"  [apify] {len(items)} results returned")
+        logger.info(f"apify: {len(items)} results returned")
         return [_normalise(item) for item in items]
