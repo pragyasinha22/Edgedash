@@ -197,6 +197,7 @@ def ask(question: str) -> Answer:
     
     try:
         routing_result = complete_json(routing_prompt, routing_schema)
+        print("DEBUG ROUTING RESULT:", routing_result)
     except LLMError as exc:
         # Log routing failure
         storage.log_query(

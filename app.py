@@ -126,7 +126,6 @@ from edgedash.query.ask import ask
 
 
 def render_ask_panel(config):
-    st.subheader("Ask Your Data")
 
     question = st.text_input(
         "Ask a question about your data",
