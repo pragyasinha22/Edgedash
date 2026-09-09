@@ -10,6 +10,7 @@ jobs:
   cycle:
     name: Run EdgeDash Cycle
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 10  # Per rule 51
     
     steps:
