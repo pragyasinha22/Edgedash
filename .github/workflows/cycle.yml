@@ -25,10 +25,17 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       
+      # - name: Migrate database
+      #   env:
+      #     DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      #   run: python -m edgedash.storage --migrate
       - name: Migrate database
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m edgedash.storage --migrate
+        run: |
+          python -c "import os; print('DATABASE_URL set:', bool(os.getenv('DATABASE_URL')))"
+          python -m edgedash.storage --migrate
+
       
       - name: Run cycle
         env:
@@ -43,3 +50,4 @@ jobs:
           name: cycle-log
           path: edgedash.db
           retention-days: 30
+
