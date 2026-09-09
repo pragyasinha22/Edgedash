@@ -24,8 +24,10 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Backend detection
-_USE_POSTGRES = os.getenv("DATABASE_URL") is not None
-_DATABASE_URL = os.getenv("DATABASE_URL")
+# _USE_POSTGRES = os.getenv("DATABASE_URL") is not None
+# _DATABASE_URL = os.getenv("DATABASE_URL")
+_DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+_USE_POSTGRES = bool(_DATABASE_URL)
 _SQLITE_PATH = os.getenv("DB_PATH", "edgedash.db")
 
 # Log backend at startup
