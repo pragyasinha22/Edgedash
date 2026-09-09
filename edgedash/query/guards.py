@@ -89,7 +89,8 @@ def _contains_control_chars(text: str) -> bool:
     # Allow normal whitespace, reject other control chars
     allowed_whitespace = {' ', '\t', '\n', '\r'}
     for char in text:
-        if char in string.control_characters and char not in allowed_whitespace:
+        # if char in string.control_characters and char not in allowed_whitespace:
+        if ord(char) < 32 and char not in allowed_whitespace:    
             return True
     return False
 

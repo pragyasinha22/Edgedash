@@ -351,7 +351,33 @@ def update_listing_score(
     with _connect(path) as conn:
         conn.execute(sql, params)
 
+# --------------------------------------------------------------------------
+def get_listings(
+    path: str,
+    limit: int | None = None,
+    where_clause: str | None = None,
+    params: tuple = (),
+) -> list[dict[str, Any]]:
+    """Return listings using a parameterised, read-only query."""
 
+    sql = "SELECT * FROM listings"
+
+    if where_clause:
+        sql += f" WHERE {where_clause}"
+
+    sql += " ORDER BY fetched_at DESC"
+
+    if limit is not None:
+        if _is_postgres():
+            sql += " LIMIT %s"
+        else:
+            sql += " LIMIT ?"
+        params = (*params, limit)
+
+    with _connect(path) as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    return [dict(row) for row in rows]
 # ---------------------------------------------------------------------------
 # Listings — read
 # ---------------------------------------------------------------------------

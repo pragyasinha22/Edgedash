@@ -17,6 +17,7 @@ from typing import Any, Callable
 from edgedash import storage
 from edgedash.config import load_config
 from edgedash.skills import canonical
+from edgedash.storage import _is_postgres
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +104,74 @@ def _validate_skill(skill: str, config) -> str | None:
         },
     },
 )
+# ------------
+@tool(
+    name="search_listings",
+    description=(
+        "Search job listings by keyword. Use this to answer questions about "
+        "jobs mentioning a skill, technology, company, title, or location."
+    ),
+    params={
+        "type": "object",
+        "properties": {
+            "keyword": {
+                "type": "string",
+                "description": "Keyword to search for in job title, company, location, or description.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum number of listings to return (default: 10, range: 1-50).",
+                "default": 10,
+            },
+        },
+    },
+)
+def search_listings(
+    keyword: str,
+    limit: int = 10,
+) -> tuple[list[dict[str, Any]], str]:
+    """Search listings using a parameterised keyword query."""
+
+    config = load_config()
+
+    keyword = keyword.strip()
+    limit = _clamp_int(limit, 1, 50)
+
+    if not keyword:
+        return [], "No search keyword provided"
+
+    pattern = f"%{keyword}%"
+
+    if _is_postgres():
+        where_clause = """
+            (
+                title ILIKE %s
+                OR company ILIKE %s
+                OR location ILIKE %s
+                OR description ILIKE %s
+            )
+        """
+    else:
+        where_clause = """
+            (
+                title LIKE ?
+                OR company LIKE ?
+                OR location LIKE ?
+                OR description LIKE ?
+            )
+        """
+
+    rows = storage.get_listings(
+        config.db_path,
+        limit=limit,
+        where_clause=where_clause,
+        params=(pattern, pattern, pattern, pattern),
+    )
+
+    summary = f"{len(rows)} listings matching '{keyword}'"
+    return rows, summary
+
+# ------------
 def companies_hiring(days: int = 7) -> tuple[list[dict[str, Any]], str]:
     """
     Companies with listings posted in the last N days.
