@@ -321,7 +321,9 @@ def upsert_listings(path: str, rows: list[dict[str, Any]]) -> int:
 
     with _connect(path) as conn:
         before = conn.execute("SELECT COUNT(*) FROM listings").fetchone()[0]
-        conn.executemany(sql, prepped)
+        # conn.executemany(sql, prepped)
+        with conn.cursor() as cur:
+           cur.executemany(sql, prepped)
         after = conn.execute("SELECT COUNT(*) FROM listings").fetchone()[0]
 
     return after - before
@@ -504,7 +506,8 @@ def upsert_skill_gaps(path: str, gaps: list[dict]) -> None:
         """
     
     with _connect(path) as conn:
-        conn.executemany(sql, gaps)
+        with conn.cursor() as cur:
+            cur.executemany(sql, gaps)
 
 
 # ---------------------------------------------------------------------------
@@ -636,29 +639,49 @@ def save_gap_snapshot(path: str, run_id: str, rows: list[dict[str, Any]]) -> Non
                 (run_id, computed_at, skill, listings_blocked, opportunity_cost,
                  mean_score, top_score, example_ids, also_nice_to_have, low_confidence)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-    
+        """   
+    # now = _now_iso()
+    # with _connect(path) as conn:
+    #     conn.executemany(
+    #         sql,
+    #         [
+    #             (
+    #                 run_id,
+    #                 now,
+    #                 r["skill"],
+    #                 r["listings_blocked"],
+    #                 r["opportunity_cost"],
+    #                 r["mean_score"],
+    #                 r["top_score"],
+    #                 json.dumps(r["example_ids"]),
+    #                 int(r["also_nice_to_have"]),
+    #                 int(r["low_confidence"]),
+    #             )
+    #             for r in rows
+    #         ],
+    #     )
+
     now = _now_iso()
     with _connect(path) as conn:
-        conn.executemany(
-            sql,
-            [
-                (
-                    run_id,
-                    now,
-                    r["skill"],
-                    r["listings_blocked"],
-                    r["opportunity_cost"],
-                    r["mean_score"],
-                    r["top_score"],
-                    json.dumps(r["example_ids"]),
-                    int(r["also_nice_to_have"]),
-                    int(r["low_confidence"]),
-                )
-                for r in rows
-            ],
-        )
-
+        with conn.cursor() as cur:
+            cur.executemany(
+                sql,
+                [
+                    (
+                        run_id,
+                        now,
+                        r["skill"],
+                        r["listings_blocked"],
+                        r["opportunity_cost"],
+                        r["mean_score"],
+                        r["top_score"],
+                        json.dumps(r["example_ids"]),
+                        int(r["also_nice_to_have"]),
+                        int(r["low_confidence"]),
+                    )
+                    for r in rows
+                ],
+            )
 
 def get_latest_gap_snapshot(path: str) -> list[dict[str, Any]]:
     """"Return all rows from the most recent gap_snapshots run, ordered by opportunity_cost desc."""
