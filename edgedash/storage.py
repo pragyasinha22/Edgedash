@@ -14,6 +14,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
+from dotenv import load_dotenv
+load_dotenv()
 # Postgres support - optional, only imported if DATABASE_URL is set
 try:
     import psycopg
@@ -71,7 +73,25 @@ def _connect(path: str | None = None):
 def _is_postgres() -> bool:
     """Return True if using Postgres backend."""
     return _USE_POSTGRES
+# ---------------------
+def _rows_to_dicts(cursor, rows) -> list[dict[str, Any]]:
+    """Convert database rows to dictionaries on both SQLite and Postgres."""
+    if not rows:
+        return []
 
+    columns = [desc.name for desc in cursor.description]
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def _row_to_dict(cursor, row) -> dict[str, Any] | None:
+    """Convert one database row to a dictionary on both backends."""
+    if row is None:
+        return None
+
+    columns = [desc.name for desc in cursor.description]
+    return dict(zip(columns, row))
+
+# --------------------
 
 def make_listing_id(source: str, url: str) -> str:
     """Stable, dedup-safe hash of source + url."""
@@ -377,9 +397,11 @@ def get_listings(
         params = (*params, limit)
 
     with _connect(path) as conn:
-        rows = conn.execute(sql, params).fetchall()
+        cursor = conn.execute(sql, params)
+        rows = cursor.fetchall()
+        columns = [desc.name for desc in cursor.description]
 
-    return [dict(row) for row in rows]
+    return [dict(zip(columns, row)) for row in rows]
 # ---------------------------------------------------------------------------
 # Listings — read
 # ---------------------------------------------------------------------------
@@ -404,8 +426,11 @@ def get_unscored_listings(path: str, limit: int | None = None) -> list[dict[str,
             sql += " LIMIT ?"
         params = (limit,)
     with _connect(path) as conn:
-        rows = conn.execute(sql, params).fetchall()
-    return [dict(r) for r in rows]
+        cursor = conn.execute(sql, params)
+        rows = cursor.fetchall()
+        columns = [desc.name for desc in cursor.description]
+
+    return [dict(zip(columns, row)) for row in rows]
 
 
 def get_scored_listings(path: str, min_score: int) -> list[dict[str, Any]]:
@@ -418,8 +443,11 @@ def get_scored_listings(path: str, min_score: int) -> list[dict[str, Any]]:
         params = (min_score,)
     
     with _connect(path) as conn:
-        rows = conn.execute(sql, params).fetchall()
-    return [dict(r) for r in rows]
+        cursor = conn.execute(sql, params)
+        rows = cursor.fetchall()
+        columns = [desc.name for desc in cursor.description]
+
+    return [dict(zip(columns, row)) for row in rows]
 
 
 def last_fetch_time(path: str) -> str | None:
@@ -470,13 +498,15 @@ def last_cycle_status(path: str) -> str | None:
 def get_last_passing_cycle(path: str) -> dict | None:
     """Return the most recent cycle with a passing verification verdict, or None."""
     with _connect(path) as conn:
-        row = conn.execute(
+        cursor = conn.execute(
             """SELECT * FROM cycle_log 
-               WHERE status = 'complete' 
-               ORDER BY finished_at DESC 
-               LIMIT 1"""
-        ).fetchone()
-    return dict(row) if row else None
+            WHERE status = 'complete' 
+            ORDER BY finished_at DESC 
+            LIMIT 1"""
+        )
+        row = cursor.fetchone()
+
+    return _row_to_dict(cursor, row)
 
 
 # ---------------------------------------------------------------------------
@@ -555,7 +585,10 @@ def get_extraction(path: str, description_hash: str) -> dict[str, Any] | None:
         params = (description_hash,)
     
     with _connect(path) as conn:
-        row = conn.execute(sql, params).fetchone()
+        cursor = conn.execute(sql, params)
+        row = cursor.fetchone()
+
+    row = _row_to_dict(cursor, row)
 
     if row is None:
         return None
@@ -686,9 +719,12 @@ def save_gap_snapshot(path: str, run_id: str, rows: list[dict[str, Any]]) -> Non
 def get_latest_gap_snapshot(path: str) -> list[dict[str, Any]]:
     """"Return all rows from the most recent gap_snapshots run, ordered by opportunity_cost desc."""
     with _connect(path) as conn:
-        row = conn.execute(
+        cursor = conn.execute(
             "SELECT run_id FROM gap_snapshots ORDER BY computed_at DESC LIMIT 1"
-        ).fetchone()
+        )
+        row = cursor.fetchone()
+        row = _row_to_dict(cursor, row)
+
         if row is None:
             return []
         latest_run = row["run_id"]
@@ -707,14 +743,13 @@ def get_latest_gap_snapshot(path: str) -> list[dict[str, Any]]:
                    ORDER BY opportunity_cost DESC""",
                 (latest_run,),
             ).fetchall()
-    
+
+    rows = cursor.fetchall()
     result = []
-    for r in rows:
-        d = dict(r)
+    for d in _rows_to_dicts(cursor, rows):
         d["example_ids"] = json.loads(d["example_ids"])
         d["low_confidence"] = bool(d["low_confidence"])
         result.append(d)
-    return result
 
 
 def get_gap_snapshot(path: str, run_id: str) -> list[dict[str, Any]]:
@@ -731,15 +766,14 @@ def get_gap_snapshot(path: str, run_id: str) -> list[dict[str, Any]]:
         params = (run_id,)
     
     with _connect(path) as conn:
-        rows = conn.execute(sql, params).fetchall()
-    
+        cursor = conn.execute(sql, params)
+        rows = cursor.fetchall()
+
     result = []
-    for r in rows:
-        d = dict(r)
+    for d in _rows_to_dicts(cursor, rows):
         d["example_ids"] = json.loads(d["example_ids"])
         d["low_confidence"] = bool(d["low_confidence"])
         result.append(d)
-    return result
 
 
 def get_distinct_gap_runs(path: str) -> list[dict[str, Any]]:
@@ -748,13 +782,15 @@ def get_distinct_gap_runs(path: str) -> list[dict[str, Any]]:
     Each row has run_id and computed_at (the timestamp of the first row in that run).
     """
     with _connect(path) as conn:
-        rows = conn.execute(
+        cursor = conn.execute(
             """SELECT run_id, MIN(computed_at) AS computed_at
-               FROM gap_snapshots
-               GROUP BY run_id
-               ORDER BY computed_at ASC"""
-        ).fetchall()
-    return [dict(r) for r in rows]
+            FROM gap_snapshots
+            GROUP BY run_id
+            ORDER BY computed_at ASC"""
+        )
+        rows = cursor.fetchall()
+
+    return _rows_to_dicts(cursor, rows)
 
 
 def get_scored_listings_with_extractions(path: str) -> list[dict[str, Any]]:
@@ -765,18 +801,24 @@ def get_scored_listings_with_extractions(path: str) -> list[dict[str, Any]]:
     """
     # Two-query approach works with both SQLite and Postgres
     with _connect(path) as conn:
-        listings = conn.execute(
+        listings_cursor = conn.execute(
             "SELECT id, fit_score, posted_at, description FROM listings WHERE fit_score IS NOT NULL"
-        ).fetchall()
-        cache = conn.execute(
+        )
+        listings = listings_cursor.fetchall()
+
+        cache_cursor = conn.execute(
             "SELECT description_hash, required_skills, nice_to_have FROM extraction_cache"
-        ).fetchall()
+        )
+        cache = cache_cursor.fetchall()
 
     import hashlib as _hl
-    hash_map = {r["description_hash"]: r for r in cache}
+    listing_dicts = _rows_to_dicts(listings_cursor, listings)
+    cache_dicts = _rows_to_dicts(cache_cursor, cache)
+
+    hash_map = {r["description_hash"]: r for r in cache_dicts}
 
     result = []
-    for lst in listings:
+    for lst in listing_dicts:
         desc = lst["description"] or ""
         h = _hl.sha256(desc.encode()).hexdigest()
         ec = hash_map.get(h)
