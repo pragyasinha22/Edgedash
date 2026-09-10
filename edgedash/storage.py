@@ -717,7 +717,9 @@ def save_gap_snapshot(path: str, run_id: str, rows: list[dict[str, Any]]) -> Non
             )
 
 def get_latest_gap_snapshot(path: str) -> list[dict[str, Any]]:
-    """"Return all rows from the most recent gap_snapshots run, ordered by opportunity_cost desc."""
+    """Return all rows from the most recent gap_snapshots run,
+    ordered by opportunity_cost desc.
+    """
     with _connect(path) as conn:
         cursor = conn.execute(
             "SELECT run_id FROM gap_snapshots ORDER BY computed_at DESC LIMIT 1"
@@ -727,29 +729,33 @@ def get_latest_gap_snapshot(path: str) -> list[dict[str, Any]]:
 
         if row is None:
             return []
+
         latest_run = row["run_id"]
-        
+
         if _is_postgres():
-            rows = conn.execute(
+            result_cursor = conn.execute(
                 """SELECT * FROM gap_snapshots
                    WHERE run_id = %s
                    ORDER BY opportunity_cost DESC""",
                 (latest_run,),
-            ).fetchall()
+            )
         else:
-            rows = conn.execute(
+            result_cursor = conn.execute(
                 """SELECT * FROM gap_snapshots
                    WHERE run_id = ?
                    ORDER BY opportunity_cost DESC""",
                 (latest_run,),
-            ).fetchall()
+            )
 
-    rows = cursor.fetchall()
+        rows = result_cursor.fetchall()
+
     result = []
-    for d in _rows_to_dicts(cursor, rows):
+    for d in _rows_to_dicts(result_cursor, rows):
         d["example_ids"] = json.loads(d["example_ids"])
         d["low_confidence"] = bool(d["low_confidence"])
         result.append(d)
+
+    return result
 
 
 def get_gap_snapshot(path: str, run_id: str) -> list[dict[str, Any]]:
