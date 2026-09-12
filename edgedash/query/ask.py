@@ -40,48 +40,106 @@ class Answer:
 
 def _build_routing_prompt(question: str, tools: dict) -> str:
     """Build the prompt for the ROUTE call - tool selection."""
-    
+
     # Build tool descriptions
     tool_descriptions = []
+
     for tool_name, tool_info in tools.items():
         desc = tool_info["description"]
         params = tool_info["params"]
-        tool_descriptions.append(f"- {tool_name}: {desc}")
+
+        tool_descriptions.append(
+            f"- {tool_name}: {desc}"
+        )
+
         if "properties" in params:
             for param_name, param_spec in params["properties"].items():
                 param_desc = param_spec.get("description", "")
                 default = param_spec.get("default", "")
-                tool_descriptions.append(f"  - {param_name}: {param_desc} (default: {default})")
-    
+
+                tool_descriptions.append(
+                    f"  - {param_name}: {param_desc} (default: {default})"
+                )
+
     tools_text = "\n".join(tool_descriptions)
-    
+
     return f"""You are a query router. Your job is to select the right tool to answer a user's question.
 
 AVAILABLE TOOLS:
+
 {tools_text}
 
 USER QUESTION:
+
 {question}
 
 INSTRUCTIONS:
+
 1. Read the user's question carefully.
+
 2. Select the tool that EXACTLY matches what the user is asking for.
+
 3. If NO tool matches the question, return tool=null. DO NOT pick the closest tool. DO NOT guess. DO NOT force a match.
+
 4. Extract any parameters the user specified from the question.
-5. Return your response as JSON with this schema:
-   {{
-     "tool": "tool_name" | null,
-     "params": {{"param_name": value, ...}},
-     "confidence": "high" | "low"
-   }}
+
+5. IMPORTANT PARAMETER INTERPRETATION RULES:
+
+   - If the user asks for a job role/title AND a location, keep them as separate parameters.
+
+     Example:
+     "Show me Data Analyst jobs in Bengaluru."
+     -> keyword="Data Analyst", location="Bengaluru"
+
+   - If the user asks for jobs requiring MULTIPLE skills, put each skill separately in the skills array.
+
+     Example:
+     "Show me jobs with SQL and Python."
+     -> skills=["SQL", "Python"]
+
+   - Do NOT combine multiple filters into one keyword.
+
+     WRONG:
+     keyword="Data Analyst Bengaluru"
+
+     CORRECT:
+     keyword="Data Analyst"
+     location="Bengaluru"
+
+   - For "Which companies are hiring Data Analysts?", use companies_hiring and set keyword="Data Analyst".
+
+   - For "Which companies are hiring?" without a specific role or keyword, use companies_hiring with its default parameters.
+
+   - For a single skill question such as "Which jobs require Python?", use search_listings with skills=["Python"].
+
+   - For a single role/title question such as "Show me Data Analyst jobs", use search_listings with keyword="Data Analyst".
+
+6. Return your response as JSON with this schema:
+
+{{
+  "tool": "tool_name" | null,
+  "params": {{"param_name": value, ...}},
+  "confidence": "high" | "low"
+}}
 
 STRICT RULES:
+
 - If the question cannot be answered by ANY tool above, return tool=null.
+
 - Never return a tool name that is not in the available tools list above.
+
 - Do not invent parameters that are not in the tool's spec.
+
 - If a parameter is not specified by the user, use the default value from the tool spec.
+
+- Keep different filters in their correct parameters. Do not merge them into the keyword parameter.
+
+- When multiple skills are requested, use the skills array rather than putting the skills together in keyword.
+
 - Set confidence="high" only when the tool CLEARLY and EXACTLY matches the question.
+
 - Set confidence="low" if the match is uncertain but you're making a best effort.
+
 - When in doubt, return tool=null. It is better to say "I can't answer this" than to pick the wrong tool.
 
 Return ONLY the JSON response. No other text."""
@@ -90,24 +148,26 @@ Return ONLY the JSON response. No other text."""
 # ---------------------------------------------------------------------------
 # Phrasing prompt
 # ---------------------------------------------------------------------------
-
 def _build_phrasing_prompt(question: str, rows: list[dict], summary: str) -> str:
     """Build the prompt for the PHRASE call - turn rows into prose."""
-    
     rows_text = "\n".join(str(row) for row in rows)
-    
+
     return f"""You are a data analyst. Write a 2-3 sentence answer to the user's question based ONLY on the data rows provided.
 
 USER QUESTION:
+
 {question}
 
 DATA SUMMARY:
+
 {summary}
 
 DATA ROWS:
+
 {rows_text}
 
 STRICT RULES:
+
 - Use ONLY the numbers present in these rows. Do not estimate, extrapolate, or add outside context.
 - If the rows are empty, say plainly: "The data does not contain an answer to this question."
 - Do not use any numbers that are not in the rows above.
@@ -123,7 +183,7 @@ Return ONLY your answer text. No other text."""
 
 def _extract_numbers(text: str) -> list[float]:
     """Extract all numbers (integers and decimals) from text."""
-    return [float(match) for match in re.findall(r'\d+\.?\d*', text)]
+    return [float(match) for match in re.findall(r"\d+(?:\.\d+)?", text)]
 
 
 def _numbers_in_rows(numbers: list[float], rows: list[dict]) -> bool:

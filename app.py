@@ -1,18 +1,27 @@
+# """
+# EdgeDash Dashboard - Streamlit interface for career intelligence.
+
+# Read-only dashboard per rule 49. Never runs a cycle.
+# Robust to hostile startup per rule 50.
+# """
 """
 EdgeDash Dashboard - Streamlit interface for career intelligence.
 
-Read-only dashboard per rule 49. Never runs a cycle.
+Dashboard displays career intelligence and allows users to update
+job-search preferences. It never runs a cycle.
 Robust to hostile startup per rule 50.
 """
-
 import logging
 import os
-from datetime import datetime, timezone
+import subprocess
+import sys
+from pathlib import Path
 
 import streamlit as st
 
 from edgedash import storage
-from edgedash.config import load_config
+from edgedash.config import load_config, save_preferences
+from edgedash.orchestrator import run_cycle
 
 # Configure logging - never log secrets
 logging.basicConfig(level=logging.INFO)
@@ -30,18 +39,26 @@ st.set_page_config(
 # Database connection with error handling
 # ---------------------------------------------------------------------------
 
-@st.cache_resource
 def get_db_status():
-    """Check database connection status without exposing secrets."""
+    """Check database availability and return the active backend."""
     try:
         config = load_config()
-        # Test connection
-        with storage._connect(config.db_path) as conn:
-            conn.execute("SELECT 1")
-        return True, "Connected", None
-    except Exception as e:
-        logger.error(f"Database connection failed: {e}")
-        return False, str(e), None
+        # st.write("DEBUG DATABASE_URL loaded:", bool(os.getenv("DATABASE_URL")))
+        # st.write("DEBUG Storage backend:", storage.get_backend_status(config.db_path))
+
+        backend, error = storage.get_backend_status(config.db_path)
+
+        if backend == "postgres":
+            return True, "Supabase", None
+
+        if backend == "sqlite":
+            return True, "SQLite", None
+
+        return False, "Unavailable", error
+
+    except Exception as exc:
+        logger.error("Database status check failed: %s", exc)
+        return False, "Unavailable", str(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -158,11 +175,18 @@ def main():
     """Main dashboard application."""
     
     # Check database status first
-    db_ok, db_message, _ = get_db_status()
-    
+    db_ok, db_backend, db_error = get_db_status()
+
     if not db_ok:
-        st.error("Database not configured or unreachable")
-        st.info("Please set DATABASE_URL environment variable and try again.")
+        st.error("🔴 Database unavailable")
+        st.info(
+            "Neither Supabase nor the local SQLite database "
+            "is currently available."
+        )
+
+        if db_error:
+            logger.error("Database error: %s", db_error)
+
         st.stop()
     
     # Load config
@@ -172,6 +196,133 @@ def main():
         st.error("Configuration error")
         logger.error(f"Config load failed: {e}")
         st.stop()
+
+    # -----------------------------------------------------------------------
+    # Active Database Status
+    # -----------------------------------------------------------------------
+    if db_backend == "Supabase":
+        st.success("🟢 **Database: Supabase — Active**")
+
+    elif db_backend == "SQLite":
+        st.warning(
+            "🟡 **Database: SQLite (`edgedash.db`) — Active**\n\n"
+            "Supabase is currently unavailable, so EdgeDash is using "
+            "the local SQLite fallback."
+        )    
+    # -----------------------------------------------------------------------
+    # Job Search Preferences
+    # -----------------------------------------------------------------------
+    with st.sidebar:
+        st.header("Job Search Preferences")
+
+        with st.form("job_preferences_form"):
+            target_role = st.text_input(
+                "Target Role",
+                value=config.target_role,
+            )
+
+            target_city = st.text_input(
+                "Target City",
+                value=config.target_city,
+            )
+
+            seniority_options = ["junior", "mid", "senior"]
+            current_seniority = (
+                config.target_seniority
+                if config.target_seniority in seniority_options
+                else "mid"
+            )
+
+            target_seniority = st.selectbox(
+                "Seniority",
+                seniority_options,
+                index=seniority_options.index(current_seniority),
+            )
+
+            experience_years = st.number_input(
+                "Experience (years)",
+                min_value=0,
+                max_value=50,
+                value=config.experience_years,
+                step=1,
+            )
+
+            prefer_remote = st.checkbox(
+                "Prefer Remote",
+                value=config.prefer_remote,
+            )
+
+            min_fit_score = st.slider(
+                "Minimum Fit Score",
+                min_value=0,
+                max_value=100,
+                value=config.min_fit_score,
+                step=5,
+            )
+
+            skills_text = st.text_area(
+                "My Skills",
+                value=", ".join(config.my_skills),
+                help="Enter skills separated by commas.",
+            )
+
+            keywords_text = st.text_area(
+                "Search Keywords",
+                value=", ".join(config.keywords),
+                help="Enter keywords separated by commas.",
+            )
+# --------------------------
+            search_jobs = st.form_submit_button(
+                "🔍 Search Jobs",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if search_jobs:
+            skills = [
+                skill.strip()
+                for skill in skills_text.split(",")
+                if skill.strip()
+            ]
+
+            keywords = [
+                keyword.strip()
+                for keyword in keywords_text.split(",")
+                if keyword.strip()
+            ]
+
+            try:
+                save_preferences(
+                    target_role=target_role,
+                    target_city=target_city,
+                    target_seniority=target_seniority,
+                    prefer_remote=prefer_remote,
+                    keywords=keywords,
+                    my_skills=skills,
+                    experience_years=experience_years,
+                    min_fit_score=min_fit_score,
+                )
+
+                storage.clear_job_search_data(config.db_path)
+
+                # Run fresh job-search cycle here             
+                st.info("🔍 Searching for new jobs...")
+
+                fresh_config = load_config()
+
+                run_cycle(
+                    fresh_config,
+                    dry_run=False,
+                    force_agents=["fetcher", "scorer", "gap_analyzer"],
+                )
+
+                st.success("✅ New job search completed!")
+                st.rerun()
+
+            except Exception as exc:
+                logger.error(f"Failed to start job search: {exc}")
+                st.error(f"Could not start job search: {exc}")
+    # --------------------------------------------------    
     
     # Header
     st.title("EdgeDash")
@@ -202,7 +353,9 @@ def main():
             st.caption("No successful cycles yet")
     
     with col_right:
-        st.markdown("[GitHub](https://github.com/yourusername/edgedash)")
+        github_url = getattr(config, "github_url", "")
+        if github_url:
+            st.markdown(f"[GitHub]({github_url})")
 
 
 if __name__ == "__main__":

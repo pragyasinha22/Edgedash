@@ -1,0 +1,102 @@
+name: EdgeDash Daily Job Search
+
+# ============================================================
+# EdgeDash Automation
+#
+# Scheduled:
+#   Every day at 4:15 PM IST
+#
+# GitHub Actions uses UTC:
+#   4:15 PM IST = 10:45 AM UTC
+#
+# Manual:
+#   workflow_dispatch allows us to test the workflow anytime.
+# ============================================================
+
+on:
+  schedule:
+    - cron: "45 10 * * *"
+
+  workflow_dispatch:
+
+# Prevent two EdgeDash cycles from running at the same time.
+concurrency:
+  group: edgedash-job-search
+  cancel-in-progress: false
+
+jobs:
+  run-edgedash:
+    name: Run EdgeDash LIVE Search
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # --------------------------------------------------------
+      # 1. Download the EdgeDash repository
+      # --------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------------
+      # 2. Set up Python
+      # --------------------------------------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      # --------------------------------------------------------
+      # 3. Install EdgeDash dependencies
+      # --------------------------------------------------------
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # --------------------------------------------------------
+      # 4. Verify configuration
+      # --------------------------------------------------------
+      - name: Verify EdgeDash configuration
+        run: |
+          python -c "import yaml; print('PyYAML: OK')"
+          python -c "from edgedash.config import load_config; c=load_config(); print('Target role:', c.target_role); print('Target city:', c.target_city); print('LIVE mode:', not c.use_mock_fetcher)"
+
+      # --------------------------------------------------------
+      # 5. Run EdgeDash
+      # --------------------------------------------------------
+      - name: Run EdgeDash LIVE search
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          echo "Starting EdgeDash LIVE job search..."
+          echo "Scheduled time: 4:15 PM IST"
+          echo "UTC time: 10:45 AM UTC"
+          echo ""
+
+          python run_cycle.py
+
+      # --------------------------------------------------------
+      # 6. Completion message
+      # --------------------------------------------------------
+      - name: Job search completed
+        if: success()
+        run: |
+          echo "=============================================="
+          echo "EdgeDash job search completed successfully."
+          echo "LIVE listings were processed."
+          echo "Results have been saved to Supabase."
+          echo "=============================================="
+
+      # --------------------------------------------------------
+      # 7. Failure message
+      # --------------------------------------------------------
+      - name: Job search failed
+        if: failure()
+        run: |
+          echo "=============================================="
+          echo "EdgeDash job search FAILED."
+          echo "Check the previous workflow step for details."
+          echo "=============================================="

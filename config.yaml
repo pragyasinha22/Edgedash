@@ -1,6 +1,6 @@
 analyse_max_seconds: 180
 db_path: edgedash.db
-experience_years: 2
+experience_years: 3
 fetch_interval_hours: 6
 fetch_max_listings: 100
 fetch_max_pages: 5
@@ -22,7 +22,7 @@ my_skills:
 - Excel
 - Pandas
 - data visualization
-prefer_remote: false
+prefer_remote: true
 score_batch_size: 25
 score_max_seconds: 300
 skill_aliases:
@@ -85,10 +85,11 @@ skill_aliases:
 sources:
 - arbeitnow
 target_city: Bengaluru
-target_role: Data Analyst
+target_role: python
 target_seniority: mid
-use_mock_fetcher: true
+use_mock_fetcher: false
 weight_recency: 0.15
 weight_remote: 0.15
 weight_seniority: 0.2
 weight_skills: 0.5
+github_url: https://github.com/pragyasinha22/Edgedash

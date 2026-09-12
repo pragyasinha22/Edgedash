@@ -118,3 +118,43 @@ def load_config(path: pathlib.Path = _CONFIG_PATH) -> Config:
         score_max_seconds=int(merged["score_max_seconds"]),
         analyse_max_seconds=int(merged["analyse_max_seconds"]),
     )
+    
+def save_preferences(
+    *,
+    target_role: str,
+    target_city: str,
+    target_seniority: str,
+    prefer_remote: bool,
+    keywords: list[str],
+    my_skills: list[str],
+    experience_years: int,
+    min_fit_score: int,
+    path: pathlib.Path = _CONFIG_PATH,
+) -> None:
+    """Update only user-facing job-search preferences in config.yaml."""
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"config.yaml not found at '{path.resolve()}'."
+        )
+
+    with path.open("r", encoding="utf-8") as fh:
+        raw: dict = yaml.safe_load(fh) or {}
+
+    # Update only preferences controlled from the Streamlit UI.
+    raw["target_role"] = target_role.strip()
+    raw["target_city"] = target_city.strip()
+    raw["target_seniority"] = target_seniority
+    raw["prefer_remote"] = bool(prefer_remote)
+    raw["keywords"] = keywords
+    raw["my_skills"] = my_skills
+    raw["experience_years"] = int(experience_years)
+    raw["min_fit_score"] = int(min_fit_score)
+
+    with path.open("w", encoding="utf-8") as fh:
+        yaml.safe_dump(
+            raw,
+            fh,
+            sort_keys=False,
+            allow_unicode=True,
+        )

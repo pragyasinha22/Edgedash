@@ -26,17 +26,110 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Backend detection
-# _USE_POSTGRES = os.getenv("DATABASE_URL") is not None
-# _DATABASE_URL = os.getenv("DATABASE_URL")
+
 _DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 _USE_POSTGRES = bool(_DATABASE_URL)
 _SQLITE_PATH = os.getenv("DB_PATH", "edgedash.db")
 
-# Log backend at startup
-if _USE_POSTGRES:
-    logger.info("Storage backend: Postgres (DATABASE_URL set)")
-else:
-    logger.info(f"Storage backend: SQLite (path: {_SQLITE_PATH})")
+# ---------------------------------------------------------------------------
+# Database availability status
+#
+# Priority:
+#   1. Supabase/Postgres
+#   2. Local SQLite fallback
+# ---------------------------------------------------------------------------
+_ACTIVE_BACKEND: str | None = None
+_BACKEND_ERROR: str | None = None
+
+
+def _select_backend(sqlite_path: str | None = None) -> None:
+    """Select the best available database backend.
+
+    Supabase is preferred when available. SQLite is used as a fallback.
+    """
+    global _ACTIVE_BACKEND, _BACKEND_ERROR
+
+    if _ACTIVE_BACKEND is not None:
+        return
+
+    db_path = sqlite_path or _SQLITE_PATH
+    errors: list[str] = []
+
+    logger.info(
+        "Database diagnostics: DATABASE_URL configured=%s, psycopg_available=%s",
+        bool(_DATABASE_URL),
+        _HAS_POSTGRES,
+    )
+    # 1. Try Supabase/Postgres first
+    if _DATABASE_URL and _HAS_POSTGRES:
+        try:
+            conn = psycopg.connect(
+                _DATABASE_URL,
+                connect_timeout=10,
+            )
+            conn.execute("SELECT 1")
+            conn.close()
+
+            _ACTIVE_BACKEND = "postgres"
+
+            logger.info("Database backend: Supabase/Postgres — Active")
+            return
+
+        except Exception as exc:
+            logger.warning(
+                "Supabase unavailable; trying SQLite fallback. "
+                "Error type=%s, error=%s",
+                type(exc).__name__,
+                exc,
+            )
+            errors.append(f"Supabase unavailable: {exc}")
+
+    elif _DATABASE_URL and not _HAS_POSTGRES:
+        errors.append(
+            "Supabase configured but psycopg is not installed."
+        )
+    else:
+        errors.append("Supabase is not configured.")
+
+    # 2. Try SQLite fallback
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.execute("SELECT 1")
+        conn.close()
+
+        _ACTIVE_BACKEND = "sqlite"
+
+        logger.info(
+            "Database backend: SQLite (%s) — Active",
+            db_path,
+        )
+        return
+
+    except Exception as exc:
+        errors.append(f"SQLite unavailable: {exc}")
+
+    # 3. Neither database available
+    _ACTIVE_BACKEND = "unavailable"
+    _BACKEND_ERROR = " | ".join(errors)
+
+    logger.error(
+        "Database unavailable: Supabase and SQLite are unavailable."
+    )
+
+
+def get_backend_status(
+    sqlite_path: str | None = None,
+) -> tuple[str, str | None]:
+    """Return the active backend and any availability error."""
+    _select_backend(sqlite_path)
+
+    if _ACTIVE_BACKEND == "postgres":
+        return "postgres", None
+
+    if _ACTIVE_BACKEND == "sqlite":
+        return "sqlite", None
+
+    return "unavailable", _BACKEND_ERROR
 
 
 # ---------------------------------------------------------------------------
@@ -55,40 +148,64 @@ def _get_connection_string() -> str:
 
 
 def _connect(path: str | None = None):
-    """Return a connection for the active backend."""
-    if _USE_POSTGRES:
+    """Return a connection using the selected database backend."""
+    _select_backend(path)
+
+    if _ACTIVE_BACKEND == "postgres":
         if not _HAS_POSTGRES:
-            raise RuntimeError("Postgres requested but psycopg not installed. Install: pip install psycopg[binary]")
-        conn = psycopg.connect(_DATABASE_URL)
+            raise RuntimeError(
+                "Supabase/Postgres selected but psycopg is not installed."
+            )
+
+        conn = psycopg.connect(
+            _DATABASE_URL,
+            connect_timeout=10,
+        )
         conn.autocommit = True
         return conn
-    else:
+
+    if _ACTIVE_BACKEND == "sqlite":
         db_path = path or _SQLITE_PATH
+
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
+    raise RuntimeError(
+        "Database unavailable: "
+        + (_BACKEND_ERROR or "No database backend is available.")
+    )
+
 
 def _is_postgres() -> bool:
-    """Return True if using Postgres backend."""
-    return _USE_POSTGRES
+    """Return True when Supabase/Postgres is the active backend."""
+    _select_backend()
+    return _ACTIVE_BACKEND == "postgres"
 # ---------------------
 def _rows_to_dicts(cursor, rows) -> list[dict[str, Any]]:
     """Convert database rows to dictionaries on both SQLite and Postgres."""
     if not rows:
         return []
 
-    columns = [desc.name for desc in cursor.description]
+    columns = [
+        desc.name if hasattr(desc, "name") else desc[0]
+        for desc in cursor.description
+    ]
+
     return [dict(zip(columns, row)) for row in rows]
 
 
 def _row_to_dict(cursor, row) -> dict[str, Any] | None:
-    """Convert one database row to a dictionary on both backends."""
+    """Convert one database row to a dictionary on both SQLite and Postgres."""
     if row is None:
         return None
 
-    columns = [desc.name for desc in cursor.description]
+    columns = [
+        desc.name if hasattr(desc, "name") else desc[0]
+        for desc in cursor.description
+    ]
+
     return dict(zip(columns, row))
 
 # --------------------
@@ -372,6 +489,20 @@ def update_listing_score(
     
     with _connect(path) as conn:
         conn.execute(sql, params)
+# --------------------------------------------------------------------------
+def clear_job_search_data(path: str) -> None:
+    """
+    Remove all data belonging to the previous job search.
+
+    Keeps reusable extraction_cache and query_log intact.
+    """
+    with _connect(path) as conn:
+        conn.execute("DELETE FROM listings")
+        conn.execute("DELETE FROM skill_gaps")
+        conn.execute("DELETE FROM gap_snapshots")
+        conn.execute("DELETE FROM cycle_log")
+
+    logger.info("Previous job search data cleared.")        
 
 # --------------------------------------------------------------------------
 def get_listings(
