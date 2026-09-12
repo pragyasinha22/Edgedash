@@ -103,6 +103,19 @@ def render_status_panel(config):
         try:
             unscored = storage.count_unscored(config.db_path)
             st.metric("Unscored Listings", unscored)
+
+            if unscored > 0:
+                with st.expander("Why are these jobs unscored?"):
+                    st.write(
+                        f"{unscored} job listing(s) were fetched successfully, "
+                        "but could not be scored during the last cycle."
+                    )
+                    st.write(
+                        "The AI scoring service was temporarily unavailable "
+                        "while processing these listings. They remain in the "
+                        "database and can be scored during a later cycle."
+                    )
+
         except Exception as e:
             logger.error(f"Failed to count unscored: {e}")
             st.metric("Unscored Listings", "Error")
@@ -127,13 +140,36 @@ def render_gaps_panel(config):
 def render_matches_panel(config):
     """Render best matches panel."""
     try:
-        matches = storage.get_scored_listings(config.db_path, min_score=70)
+        min_score = config.min_fit_score
+
+        matches = storage.get_scored_listings(
+            config.db_path,
+            min_score=min_score,
+        )
+
         if matches:
             for match in matches[:5]:
-                with st.expander(f"{match['title']} at {match['company']} - Score: {match['fit_score']}"):
-                    st.write(match.get('fit_reason', 'No reason available'))
+                with st.expander(
+                    f"{match['title']} at {match['company']} "
+                    f"- Score: {match['fit_score']}"
+                ):
+                    st.write(
+                        match.get(
+                            "fit_reason",
+                            "No reason available",
+                        )
+                    )
         else:
-            st.info("No scored listings yet.")
+            st.info(
+                f"No matches above your minimum fit score of "
+                f"{min_score}."
+            )
+
+            st.caption(
+                "Jobs may have been scored successfully, but their "
+                "fit scores did not meet your selected threshold."
+            )
+
     except Exception as e:
         logger.error(f"Failed to load matches: {e}")
         st.warning("Could not load matches")

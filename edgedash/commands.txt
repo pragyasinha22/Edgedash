@@ -55,6 +55,20 @@ pip install -r requirement.txt
 5.After this run migrate-python -m edgedash.storage --migrate
 All the tables that we had in sqlite db are created in postgres database
 
+---------------------------------------
+Project->settings->sercret and variables->Actions->Manage environment secret->
+
+------------------------------------------
+Example of Good questions to ask-
+
+Which jobs require Python?
+What are the top 5 highest-scoring jobs?
+Which companies are hiring for Python roles?
+Which jobs require SQL?
+What skills are most commonly required?
+What are my biggest skill gaps?
+Which jobs match my skills best?
+Which jobs have a fit score above 40?
 
 
 
